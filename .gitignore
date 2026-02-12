@@ -1,0 +1,4 @@
+# ignore medical_datasets folder
+medical_datasets/
+# ignore .env file
+.env
