@@ -1,0 +1,30 @@
+{
+  "case_id": "string (UUID)",
+  "embedding": "float[] (MedSigLIP vector, 1152-dim)",
+  "modality": "string (X-ray | CT | MRI | Histopathology)",
+  "image_path": "string (path to DICOM/JPG)",
+  "clinical_summary": "string (free-text presentation)",
+  "fhir_bundle": {
+    "patient_age": "int",
+    "patient_sex": "string",
+    "conditions": ["ICD-10 codes"],
+    "observations": ["key lab/imaging findings"]
+  },
+  "diagnosis": "string (final diagnosis)",
+  "diagnosis_umls_cui": "string (UMLS concept ID)",
+  "treatment_protocol": "string (treatment summary)",
+  "outcome": {
+    "success": "boolean",
+    "outcome_detail": "string (e.g., complete remission, partial response)",
+    "follow_up_months": "int"
+  },
+  "facility": {
+    "facility_id": "string",
+    "name": "string (e.g., Mayo Clinic - Rochester)",
+    "department": "string",
+    "country": "string",
+    "coordinates": { "lat": "float", "lon": "float" },
+    "equipment": ["string (e.g., robotic surgery, 3T MRI, pediatric ICU)"]
+  },
+  "source_dataset": "string (MultiCaRe | CUPCase | ROCOv2 | MedPix | synthetic)"
+}

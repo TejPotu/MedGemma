@@ -1,0 +1,46 @@
+{
+  "total_xrays": 12586,
+  "total_chest_xrays": 2235,
+  "unique_articles_with_chest_xrays": 1553,
+  "views": [
+    "frontal",
+    "oblique",
+    "sagittal",
+    "periapical",
+    "occlusal",
+    "ultrasound_view",
+    "axial"
+  ],
+  "sample_records": [
+    {
+      "file": "PMC10009052_gr1_undivided_1_1.webp",
+      "patient_id": "PMC10009052_01",
+      "radiology_view": "frontal",
+      "caption": "Chest X-ray posterior-anterior view showing bilateral nonhomogeneous opacities in the lower zone."
+    },
+    {
+      "file": "PMC10010120_IMCRJ-16-129-g0006_undivided_1_1.webp",
+      "patient_id": "PMC10010120_01",
+      "radiology_view": "frontal",
+      "caption": "A chest x-ray image showed a ground glass appearance from the mid to the bottom of the right lung."
+    },
+    {
+      "file": "PMC10012974_TJTCS-2023-31-1-128-130-F1_undivided_1_1.webp",
+      "patient_id": "PMC10012974_01",
+      "radiology_view": "frontal",
+      "caption": "Chest X-ray showing new implantable central venous catheter inserted into the left subclavian vein (arrow in upper right corner) and fracture catheter fragment embolized to the middle lobe branch of the right segmentary pulmonary artery (arrow in lower left corner)."
+    },
+    {
+      "file": "PMC10014623_fped-11-1144384-g001_A_1_2.webp",
+      "patient_id": "PMC10014623_01",
+      "radiology_view": "frontal",
+      "caption": "Chest x-ray. (A) Large soft tissue shadow in bilateral thoracic cavity."
+    },
+    {
+      "file": "PMC10014623_fped-11-1144384-g001_B_2_2.webp",
+      "patient_id": "PMC10014623_01",
+      "radiology_view": "frontal",
+      "caption": "Chest x-ray. (B) Chest x-ray 2 months after thymectomy showed good expansion of both lungs and no recurrence."
+    }
+  ]
+}
