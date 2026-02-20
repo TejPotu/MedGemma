@@ -113,9 +113,10 @@ def load_images_node(state: DiagnosisState) -> DiagnosisState:
 # ─────────────────────────────────────────────
 # MedGemma Helpers
 # ─────────────────────────────────────────────
-
 def _build_medgemma_prompt(case_data: dict, images_b64: list, task: str) -> list:
     """Build a multimodal message list for MedGemma."""
+    import json
+    
     patient = case_data.get("patient", {})
     presentation = case_data.get("presentation", {})
     findings = case_data.get("findings", {})
@@ -144,11 +145,13 @@ IMAGING STUDY:
 - View: {study.get('view_position', 'N/A')}
 
 RADIOLOGICAL FINDINGS:
-- Consolidation: {findings.get('lungs', {}).get('consolidation_present', 'unknown')} 
-  Locations: {', '.join(findings.get('lungs', {}).get('consolidation_locations', [])) or 'N/A'}
-- Cardiomegaly: {findings.get('cardiomediastinal', {}).get('cardiomegaly', 'unknown')}
-- Pleural effusion: {findings.get('pleura', {}).get('effusion_present', 'unknown')}
 """
+    # Dynamically inject ALL available findings, regardless of body system
+    if findings:
+        for region, details in findings.items():
+            clinical_text += f"- {region.upper()}: {json.dumps(details)}\n"
+    else:
+        clinical_text += "- No specific radiological findings documented.\n"
 
     # Image captions context
     if images_b64:
@@ -166,7 +169,6 @@ RADIOLOGICAL FINDINGS:
         })
     
     return [HumanMessage(content=content)]
-
 
 def preload_model() -> None:
     """
@@ -335,11 +337,69 @@ def _call_medgemma_local(messages: list, system_prompt: str, max_new_tokens: int
 # Diagnosis Nodes
 # ─────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are MedGemma, an expert AI medical diagnostic assistant.
+SYSTEM_PROMPT = """You are an expert AI medical diagnostic assistant.
 You analyze clinical cases with the rigor of a senior physician, considering all
 available information: patient history, symptoms, medications, imaging, and lab findings.
 Be systematic, evidence-based, and transparent about your reasoning and uncertainty.
 When asked for JSON output, respond with ONLY valid JSON — no markdown fences, no commentary before or after."""
+
+
+def _extract_text_diagnosis(text: str) -> dict | None:
+    """
+    Fallback parser for when model outputs prose instead of JSON.
+    Attempts to extract diagnosis info from markdown/text format.
+    """
+    import re
+    
+    result = {}
+    
+    # Extract primary/main condition
+    condition_patterns = [
+        r'(?:PRIMARY DIAGNOSIS|Condition|Main Diagnosis)[:\s]*[-\*]?\s*([^\n]+)',
+        r'(?:The (?:primary|main) diagnosis is)[:\s]*([^\n\.]+)',
+    ]
+    for pat in condition_patterns:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            condition = m.group(1).strip().strip('*').strip()
+            if condition and len(condition) > 2:
+                result['acute_complication'] = {'condition': condition, 'confidence': 85, 'reasoning': 'Extracted from text output'}
+                break
+    
+    # Extract confidence if present
+    conf_match = re.search(r'Confidence[:\s]*([\d]+)', text, re.IGNORECASE)
+    if conf_match and 'acute_complication' in result:
+        try:
+            result['acute_complication']['confidence'] = int(conf_match.group(1))
+        except ValueError:
+            pass
+    
+    # Extract differentials from numbered or bulleted lists
+    diff_section = re.search(r'DIFFERENTIAL DIAGNOSES?[:\s]*(.+?)(?:CRITICAL|CLINICAL REASONING|$)', text, re.DOTALL | re.IGNORECASE)
+    if diff_section:
+        diff_text = diff_section.group(1)
+        # Find numbered items like "1. Condition" or "- Condition"
+        diff_items = re.findall(r'(?:\d+\.\s*\*\*|\d+\.\s*|[-\*]\s*\*\*)([^\*\n]+)', diff_text)
+        differentials = []
+        for item in diff_items[:5]:  # Limit to 5
+            cond = item.strip().strip('*').strip()
+            if cond and len(cond) > 2 and not cond.lower().startswith(('confidence', 'supporting', 'against')):
+                differentials.append({
+                    'condition': cond,
+                    'confidence': 50,
+                    'supporting_evidence': [],
+                    'against_evidence': []
+                })
+        if differentials:
+            result['differentials'] = differentials
+    
+    # Extract critical findings
+    crit_section = re.search(r'CRITICAL FINDINGS?[:\s]*(.+?)(?:CLINICAL REASONING|$)', text, re.DOTALL | re.IGNORECASE)
+    if crit_section:
+        findings = re.findall(r'[-\*]\s*\*\*([^\*]+)\*\*|[-\*]\s*([^\n]+)', crit_section.group(1))
+        result['critical_findings'] = [f[0] or f[1] for f in findings if (f[0] or f[1]).strip()][:5]
+    
+    return result if result else None
 
 
 def _extract_json_object(text: str) -> dict | None:
@@ -370,6 +430,12 @@ def _extract_json_object(text: str) -> dict | None:
                             return json.loads(text[start:start + i + 1])
                         except json.JSONDecodeError:
                             break
+    
+    # 3. Fallback: try to extract from prose/text format
+    text_result = _extract_text_diagnosis(text)
+    if text_result:
+        return text_result
+    
     return None
 
 
@@ -402,41 +468,71 @@ def _extract_json_array(text: str) -> list | None:
                             break
     return None
 
-
 def initial_diagnosis_node(state: DiagnosisState) -> DiagnosisState:
     """Generate initial diagnosis with differential and confidence scores."""
     print("[diagnosis] Generating initial diagnosis...")
 
     task = """Analyze the clinical case and images above. Respond with ONLY a JSON object (no other text).
 
+CRITICAL INSTRUCTIONS:
+1. Separate the underlying etiology (root cause) from the acute complication or primary focus that requires immediate intervention.
+2. MEDICAL REALITY CHECK: Never assign 100% confidence to any single condition. Always distribute probabilities to leave room for uncertainty and differentials.
+
 Required JSON structure:
-{"primary_diagnosis":{"condition":"<name>","confidence":<0-100>,"reasoning":"<1-2 sentences>"},"differentials":[{"condition":"<name>","confidence":<0-100>,"supporting_evidence":["<evidence>"],"against_evidence":["<evidence>"]}],"critical_findings":["<finding>"],"clinical_reasoning":"<step-by-step reasoning>"}
+{
+  "underlying_etiology": {"condition": "<name>", "confidence": <0-99>},
+  "acute_complication": {"condition": "<name>", "confidence": <0-99>, "requires_intervention": true, "reasoning": "<1-2 sentences>"},
+  "differentials": [
+    {"condition": "<name>", "confidence": <0-99>, "supporting_evidence": ["<evidence>"], "against_evidence": ["<evidence>"]}
+  ],
+  "critical_findings": ["<finding>"],
+  "clinical_reasoning": "<step-by-step reasoning>"
+}
 
 Provide 3-5 differentials. Be specific and evidence-based."""
 
-    messages = _build_medgemma_prompt(state["case_data"], state["images_b64"], task)
-    response = _call_medgemma(messages, SYSTEM_PROMPT, max_new_tokens=2048)
+    # Retry logic: try up to 2 times if JSON parsing fails
+    max_retries = 2
+    diagnosis_data = None
+    response = ""
+    
+    for attempt in range(max_retries):
+        messages = _build_medgemma_prompt(state["case_data"], state["images_b64"], task)
+        response = _call_medgemma(messages, SYSTEM_PROMPT, max_new_tokens=2048)
 
-    # Debug: show raw response
-    print(f"[diagnosis] Raw response ({len(response)} chars):")
-    print(response[:500])
-    if len(response) > 500:
-        print(f"... ({len(response) - 500} more chars)")
+        # Debug: show raw response
+        print(f"[diagnosis] Attempt {attempt + 1} - Raw response ({len(response)} chars):")
+        print(response[:500])
+        if len(response) > 500:
+            print(f"... ({len(response) - 500} more chars)")
 
-    # Robust JSON extraction
-    diagnosis_data = _extract_json_object(response)
+        # Robust JSON extraction (includes text fallback)
+        diagnosis_data = _extract_json_object(response)
+        
+        if diagnosis_data is not None and diagnosis_data.get('acute_complication') or diagnosis_data.get('differentials'):
+            print(f"[diagnosis] JSON extraction successful on attempt {attempt + 1}")
+            break
+        elif attempt < max_retries - 1:
+            print(f"[diagnosis] JSON extraction failed, retrying with stricter prompt...")
+            # Make the task prompt stricter for retry
+            task = """IMPORTANT: You MUST respond with ONLY valid JSON. No explanatory text before or after.
+
+Analyze the clinical case. Return this exact JSON structure:
+{"underlying_etiology": {"condition": "<name>", "confidence": <0-99>}, "acute_complication": {"condition": "<name>", "confidence": <0-99>, "requires_intervention": true, "reasoning": "<1-2 sentences>"}, "differentials": [{"condition": "<name>", "confidence": <0-99>, "supporting_evidence": ["<evidence>"], "against_evidence": ["<evidence>"]}], "critical_findings": ["<finding>"], "clinical_reasoning": "<reasoning>"}
+
+Provide 3-5 differentials. Start your response with { and end with }."""
+
     if diagnosis_data is None:
-        print("[diagnosis] WARNING: Could not parse JSON from response, storing raw text.")
+        print("[diagnosis] WARNING: Could not parse JSON from response after retries, storing raw text.")
         diagnosis_data = {"raw_response": response}
 
     return {
         **state,
         "initial_diagnosis": json.dumps(diagnosis_data, indent=2),
         "differential_diagnoses": diagnosis_data.get("differentials", []),
-        "messages": [AIMessage(content=f"Initial diagnosis generated: {diagnosis_data.get('primary_diagnosis', {}).get('condition', 'unknown')}")]
+        "messages": [AIMessage(content=f"Initial diagnosis generated: {diagnosis_data.get('acute_complication', {}).get('condition', 'unknown')}")]
     }
-
-
+    
 def bias_check_node(state: DiagnosisState) -> DiagnosisState:
     """Check for diagnostic anchoring bias and cognitive shortcuts."""
     print("[bias_check] Performing cognitive bias check...")
@@ -476,6 +572,53 @@ Also identify: What diagnoses might a physician MISS due to these biases?
         "bias_check_notes": response,
         "messages": [AIMessage(content="Bias check completed.")]
     }
+
+
+def _extract_text_alternatives(text: str) -> list | None:
+    """
+    Fallback parser for extracting alternative diagnoses from prose output.
+    """
+    import re
+    
+    alternatives = []
+    
+    # Look for numbered items like "1. Condition Name" or "**Condition Name**"
+    patterns = [
+        r'\d+\.\s*\*\*([^\*]+)\*\*',  # 1. **Condition**
+        r'\d+\.\s*([^:\n]+?)(?::|\n)',  # 1. Condition:
+        r'[-\*]\s*\*\*([^\*]+)\*\*',  # - **Condition**
+    ]
+    
+    for pat in patterns:
+        matches = re.findall(pat, text)
+        for match in matches:
+            cond = match.strip()
+            # Filter out common non-diagnosis phrases
+            if (cond and len(cond) > 3 and len(cond) < 100 and 
+                not any(skip in cond.lower() for skip in 
+                       ['confidence', 'evidence', 'missed', 'why', 'risk', 'test', 'supporting'])):
+                # Try to extract confidence for this condition
+                conf_match = re.search(rf'{re.escape(cond)}.*?(?:confidence|Confidence)[:\s]*(\d+)', text, re.DOTALL)
+                confidence = int(conf_match.group(1)) if conf_match else 50
+                
+                # Try to extract risk level
+                risk_match = re.search(rf'{re.escape(cond)}.*?(?:risk|Risk)[:\s]*([\w]+)', text, re.DOTALL)
+                risk = risk_match.group(1).lower() if risk_match else 'medium'
+                if risk not in ['low', 'medium', 'high', 'critical']:
+                    risk = 'medium'
+                
+                alternatives.append({
+                    'condition': cond,
+                    'confidence': confidence,
+                    'why_missed': 'Extracted from text output',
+                    'supporting_evidence': [],
+                    'confirmatory_tests': [],
+                    'risk_if_missed': risk
+                })
+        if alternatives:
+            break
+    
+    return alternatives[:5] if alternatives else None
 
 
 def alternative_hypotheses_node(state: DiagnosisState) -> DiagnosisState:
@@ -519,7 +662,11 @@ Respond with ONLY a JSON array (no other text). Each element must have:
                     alts = v
                     break
         if alts is None:
-            alts = [{"raw_response": response}]
+            # Try text extraction fallback
+            print("[alternatives] Trying text extraction fallback...")
+            alts = _extract_text_alternatives(response)
+        if alts is None:
+            alts = [{"raw_response": response, "condition": "See raw output", "confidence": 0, "risk_if_missed": "unknown"}]
 
     return {
         **state,
@@ -565,9 +712,15 @@ PATIENT SUMMARY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PRIMARY DIAGNOSIS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Condition:   {initial_data.get('primary_diagnosis', {}).get('condition', 'See raw output')}
-Confidence:  {initial_data.get('primary_diagnosis', {}).get('confidence', '?')}%
-Reasoning:   {initial_data.get('primary_diagnosis', {}).get('reasoning', 'See raw output')}
+Condition:   {initial_data.get('acute_complication', initial_data.get('underlying_etiology', {})).get('condition', 'See raw output')}
+Confidence:  {initial_data.get('acute_complication', initial_data.get('underlying_etiology', {})).get('confidence', '?')}%
+Reasoning:   {initial_data.get('acute_complication', initial_data.get('underlying_etiology', {})).get('reasoning', 'N/A')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+UNDERLYING ETIOLOGY (if different from primary)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Condition:   {initial_data.get('underlying_etiology', {}).get('condition', 'Same as primary or N/A')}
+Confidence:  {initial_data.get('underlying_etiology', {}).get('confidence', 'N/A')}%
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 DIFFERENTIAL DIAGNOSES
@@ -681,3 +834,167 @@ if __name__ == "__main__":
     import sys
     case_id = sys.argv[1] if len(sys.argv) > 1 else "e0a8f078-fb8f-5281-ae67-256e060d0ef0"
     run_diagnosis(case_id)
+
+
+# ─────────────────────────────────────────────
+# Interactive Chat with Case Context
+# ─────────────────────────────────────────────
+
+class CaseChat:
+    """
+    Interactive chat session with patient case context.
+    Maintains conversation history for multi-turn dialogue.
+    """
+
+    def __init__(self, final_state: dict):
+        """
+        Initialize chat with a completed diagnosis pipeline state.
+
+        Args:
+            final_state: The dict returned by graph.invoke() containing
+                         case_data, images_b64, initial_diagnosis, etc.
+        """
+        self.state = final_state
+        self.case_data = final_state["case_data"]
+        self.images_b64 = final_state.get("images_b64", [])
+        self.diagnosis = final_state.get("initial_diagnosis", "{}")
+        self.differentials = final_state.get("differential_diagnoses", [])
+        self.alternatives = final_state.get("alternative_hypotheses", [])
+        self.history: List[dict] = []  # [{"role": "user/assistant", "content": "..."}]
+
+    def _build_context_prompt(self) -> str:
+        """Build a compact case summary for chat context."""
+        patient = self.case_data.get("patient", {})
+        presentation = self.case_data.get("presentation", {})
+        assessment = self.case_data.get("assessment", {})
+
+        return f"""You are a medical AI assistant discussing a specific patient case. Use the case context below to answer questions accurately.
+
+=== PATIENT CASE CONTEXT ===
+Patient: {patient.get('age_years', '?')} y/o {patient.get('sex', '?')}
+Chief Complaint: {presentation.get('chief_complaint', 'N/A')}
+HPI: {presentation.get('hpi', 'N/A')[:500]}
+Comorbidities: {', '.join(patient.get('comorbidities', [])) or 'None'}
+Medications: {', '.join(patient.get('medications', [])) or 'None'}
+
+=== AI DIAGNOSIS ===
+{self.diagnosis}
+
+=== GROUND TRUTH ===
+Actual Diagnosis: {assessment.get('diagnosis_primary', 'N/A')}
+Differentials: {', '.join(assessment.get('differential', []))}
+
+Answer the user's questions about this case. Be specific, cite findings from the case, and explain your reasoning. If asked about treatment or prognosis, note that this is for educational discussion only."""
+
+    def ask(self, question: str, include_images: bool = False) -> str:
+        """
+        Send a question about the case and get a response.
+
+        Args:
+            question: User's question about the case
+            include_images: Whether to include case images in the context (slower but more accurate for imaging questions)
+
+        Returns:
+            AI response string
+        """
+        # Build messages with conversation history
+        system_prompt = self._build_context_prompt()
+
+        # Construct content - text only or multimodal
+        if include_images and self.images_b64:
+            content = [{"type": "text", "text": question}]
+            for img in self.images_b64[:4]:  # Limit to 4 images
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{img['mime']};base64,{img['b64']}"}
+                })
+            user_msg = HumanMessage(content=content)
+        else:
+            user_msg = HumanMessage(content=question)
+
+        # Include recent history (last 6 turns to avoid context overflow)
+        messages = []
+        for turn in self.history[-6:]:
+            if turn["role"] == "user":
+                messages.append(HumanMessage(content=turn["content"]))
+            else:
+                messages.append(AIMessage(content=turn["content"]))
+        messages.append(user_msg)
+
+        # Call MedGemma
+        response = _call_medgemma(messages, system_prompt, max_new_tokens=1024)
+
+        # Update history
+        self.history.append({"role": "user", "content": question})
+        self.history.append({"role": "assistant", "content": response})
+
+        return response
+
+    def clear_history(self):
+        """Reset conversation history."""
+        self.history = []
+        print("Chat history cleared.")
+
+    def get_diagnosis_summary(self) -> dict:
+        """Return a structured summary of diagnoses for display."""
+        try:
+            diag_data = json.loads(self.diagnosis)
+        except:
+            diag_data = {}
+
+        # Support both schema variants: acute_complication (correct) or primary_diagnosis (legacy)
+        primary = diag_data.get("acute_complication", diag_data.get("primary_diagnosis", {}))
+        # Also check for underlying_etiology as a secondary primary source
+        if not primary.get("condition"):
+            primary = diag_data.get("underlying_etiology", {})
+        diffs = diag_data.get("differentials", [])
+
+        # Build ranked list
+        ranked = []
+        if primary.get("condition"):
+            ranked.append({
+                "rank": 1,
+                "condition": primary["condition"],
+                "confidence": primary.get("confidence", 0),
+                "reasoning": primary.get("reasoning", ""),
+                "type": "primary"
+            })
+
+        for i, d in enumerate(diffs, start=2):
+            ranked.append({
+                "rank": i,
+                "condition": d.get("condition", "Unknown"),
+                "confidence": d.get("confidence", 0),
+                "reasoning": "; ".join(d.get("supporting_evidence", [])[:2]),
+                "type": "differential"
+            })
+
+        # Add alternatives
+        for alt in self.alternatives:
+            if isinstance(alt, dict) and alt.get("condition"):
+                ranked.append({
+                    "rank": len(ranked) + 1,
+                    "condition": alt["condition"],
+                    "confidence": alt.get("confidence", 0),
+                    "reasoning": alt.get("why_missed", ""),
+                    "type": "alternative",
+                    "risk_if_missed": alt.get("risk_if_missed", "unknown")
+                })
+
+        return {
+            "primary": primary,
+            "ranked_list": ranked,
+            "ground_truth": self.case_data.get("assessment", {}).get("diagnosis_primary", "N/A")
+        }
+
+
+def create_chat_session(final_state: dict) -> CaseChat:
+    """
+    Create an interactive chat session from a completed diagnosis pipeline.
+
+    Usage:
+        final_state = graph.invoke(initial_state)
+        chat = create_chat_session(final_state)
+        response = chat.ask("Why did you rule out tuberculosis?")
+    """
+    return CaseChat(final_state)
