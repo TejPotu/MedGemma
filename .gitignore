@@ -1,4 +1,22 @@
-# ignore medical_datasets folder
-medical_datasets/
-# ignore .env file
+# ─── Environment & secrets ───
 .env
+.venv/
+.hf_cache/
+
+# ─── Python ───
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# ─── Jupyter / notebooks ───
+.ipynb_checkpoints/
+
+# ─── Large datasets (not tracked in git) ───
+medical_datasets/
+cxr_full_dataset/
+cxr_schema_dataset/
+subset_dataset/
+
+# ─── Generated outputs ───
+diagnosis_*.json
