@@ -2,7 +2,7 @@
 .env
 .venv/
 .hf_cache/
-
+.tmp/
 # ─── Python ───
 __pycache__/
 *.pyc
@@ -17,6 +17,22 @@ medical_datasets/
 cxr_full_dataset/
 cxr_schema_dataset/
 subset_dataset/
+cluster_19_scimitar_syndrome/
+database_schema_and_diagnosis/
+mucormycosis_cases/
+ruptured_hydatid_cyst_cases/
+scc_effusion_cases/
+sheehan_syndrome_cases/
+
 
 # ─── Generated outputs ───
 diagnosis_*.json
+
+*.slurm
+job_*.out
+*.json
+*.log
+*extract_*.py
+test_*.py
+!extract_cluster_data.py
+

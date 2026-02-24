@@ -1,0 +1,19 @@
+# TODO
+Easy wins:
+- [ ] Explain comorbidities when hover over them
+- [ ] Add extracted information (findings) from scans below the image
+- [ ] Locate where pregnant information is stored - Handle the patient details section by expanding the schema
+- [ ] Handle edge case: provide additional details and update case profile even after obtaining full context
+- [ ] Draw boxes on actual problems over images
+- [ ] Step 1: medgemma creates context - connecting images and the text data (half of the job)
+
+Takes time but worth it:
+- [ ] Auto-simulate patient scenario from partial data 
+- [ ] Establish a channel to make the treatment easy and accessible and connect to the right doctors and hospitals. - use medgemma 27B to generate the simulated data
+- [ ] Simulate medication and equipment used to treat patient
+- [ ] Show medgemma enrichment transition in green
+- [ ] Implement text embeddings - to improve the retirival results and make it more accurate
+
+Low priority:
+- [ ] Compare with CXR-embd
+- [ ] Write demo scenario story highlighting different features

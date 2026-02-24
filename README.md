@@ -1,157 +1,90 @@
-# MedGemma Medical Image Analysis
+# MedGemma Medical Case Analysis & Differential Diagnosis
 
-A medical imaging AI project using Google's MedGemma model for analyzing brain MRI scans and predicting diagnoses from the MultiCaRe dataset.
+A medical imaging AI framework using Google's MedGemma model for analyzing clinical case reports and multi-modal datasets (Chest X-Ray, Brain MRI) to perform structured data extraction and advanced differential diagnosis.
 
-## Overview
+## 🚀 Overview
 
-This project demonstrates the use of MedGemma (google/medgemma-1.5-4b-it), a medical vision-language model, to:
-- Analyze multiple brain MRI images from a single patient case
-- Generate differential diagnoses based on radiological findings
-- Compare AI-generated diagnoses with ground truth from case reports
-- Evaluate model performance on medical image interpretation tasks
+This project leverages **MedGemma** (google/medgemma-1.5-4b-it), a state-of-the-art medical vision-language model, to:
+- **Structure Medical Data**: Extract clinical entities (symptoms, duration, findings) into a standardized schema from raw case reports.
+- **Advanced Differential Diagnosis**: Use a **LangGraph-based** multi-step reasoning pipeline to generate, critique, and refine medical hypotheses.
+- **Multi-Modal Analysis**: Process patient cases containing both clinical text and multiple medical images (X-Rays, MRIs).
+- **Automated Evaluation**: Compare AI-generated findings against ground truth data from the MultiCaRe dataset.
 
-## Project Structure
+## 📂 Project Structure
 
-```
+```text
 medgemma/
-├── README.md
-├── medgemma.ipynb              # Main MedGemma experimentation notebook
-├── multicare_dataset.ipynb     # MultiCaRe dataset analysis with MedGemma
-└── medical_datasets/
-    ├── pxa_test_set/           # Filtered dataset for PXA/glioma cases
-    │   ├── cases.csv           # Patient case information
-    │   ├── image_metadata.json # Image metadata and file paths
-    │   ├── article_metadata.json
-    │   ├── case_report_citations.json
-    │   ├── readme.txt
-    │   └── images/             # MRI images organized by PMC ID
-    │       └── PMC*/
-    └── whole_multicare_dataset/
-        ├── captions_and_labels.csv
-        ├── data_dictionary.csv
-        └── PMC*/               # Full dataset images
+├── database_schema_and_diagnosis/  # Core logic (Recently Organized)
+│   ├── build_schema_dataset.py     # Parses raw datasets into structured JSON
+│   ├── diagnosis_graph.py          # LangGraph implementation for Diff. Diagnosis
+│   ├── transform_to_schema.py      # Schema transformation utilities
+│   ├── schema.json                 # Target medical schema definition
+│   └── diagnosis_notebook.ipynb    # Interactive playground for Graph Diagnosis
+├── build_cxr_dataset.py            # Dataset builder for Chest X-Ray subset
+├── diagnosis_graph.py              # Main graph-based reasoning engine
+├── multicare_dataset.ipynb         # MultiCaRe dataset exploration
+├── medgemma.ipynb                  # Base MedGemma experimentation
+└── medical_datasets/               # Data storage
+    ├── whole_multicare_dataset/    # Source MultiCaRe data
+    └── cxr_schema_dataset/         # Processed structured dataset
 ```
 
-## Features
+## ✨ Key Features
 
-### Multi-Image Analysis
-The system analyzes **all available images** for a single patient case, providing:
-- Image-by-image findings
-- Integrated analysis across all images
-- Key radiological features (signal characteristics, lesion location, mass effect, etc.)
-- Differential diagnosis ranked by probability
-- Recommended next steps
+### 🧠 Differential Diagnosis Pipeline (LangGraph)
+The system uses a sophisticated agentic workflow:
+1. **Initial Diagnosis**: MedGemma generates a ranked list of potential conditions based on clinical text + images.
+2. **Bias Check**: A critical review step identifies cognitive shortcuts or "anchoring bias."
+3. **Alternative Hypotheses**: The model is forced to consider lower-probability but critical "can't-miss" diagnoses.
+4. **Final Synthesis**: Compiles a structured diagnostic report with evidence citations.
 
-### Model Self-Evaluation
-Automated comparison of AI predictions against ground truth case reports, evaluating:
-- Diagnosis accuracy
-- Radiological findings comparison
-- Clinical reasoning assessment
-- Overall score with justification
+### 📋 Structured Schema Extraction
+Converts messy, unstructured clinical text into a clean database format covering:
+- Chief complaint & symptom duration
+- Comorbidities & medications
+- Detailed radiological findings (Pleural effusion, Cardiomegaly, etc.)
+- Outcome details & ground truth confirmation
 
-## Requirements
+## 🛠️ Requirements & Setup
 
-- Python 3.8+
-- PyTorch with CUDA support
-- Transformers library
-- PIL (Pillow)
-- Pandas
-- Matplotlib
-- multiversity (for MultiCaRe dataset creation)
+### Environment
+- **Python**: 3.10+
+- **GPU**: NVIDIA (16GB+ VRAM for 4b model, 40GB+ for larger variants)
+- **Cuda**: 11.8+
 
-## Installation
-
+### Installation
 ```bash
-pip install transformers torch pillow pandas matplotlib
-pip install multiversity  # For MultiCaRe dataset handling
+pip install torch transformers pillow pandas matplotlib langgraph
+# Note: Ensure you have access to the MedGemma model on HuggingFace
+export HF_TOKEN="your_token_here"
 ```
 
-## Usage
+## 📖 Usage
 
-### 1. Create a Filtered Dataset
+### 1. Building the Structured Dataset
+Transform the raw MultiCaRe case reports into the standardized schema:
+```bash
+python build_schema_dataset.py
+```
 
+### 2. Running Differential Diagnosis
+You can run the full agentic diagnosis pipeline using the command line or the provided notebook:
 ```python
-from multiversity.multicare_dataset import MedicalDatasetCreator
+from diagnosis_graph import run_diagnosis
 
-mdc = MedicalDatasetCreator(directory='medical_datasets')
-filters = [
-    {'field': 'case_strings', 'string_list': ['PXA', 'xanthoastrocytoma', 'glioma'], 'operator': 'any'},
-    {'field': 'label', 'string_list': ['mri', 'head']}
-]
-mdc.create_dataset(dataset_name='pxa_test_set', filter_list=filters, dataset_type='multimodal')
+# Run diagnosis for a specific case ID
+result = run_diagnosis("PMC1234567")
+print(result['final_report'])
 ```
 
-### 2. Load MedGemma Model
+## 📊 Dataset & Model
 
-```python
-from transformers import pipeline
-import torch
+- **Dataset**: [MultiCaRe (Multimodal Case Reports)](https://github.com/mauro-nievoff/MultiCaRe_Dataset), a collection of open-access PubMed Central reports.
+- **Model**: **MedGemma 1.5 4B-IT**, Google's medical-tuned version of Gemma, optimized for clinical reasoning and image interpretation.
 
-pipe = pipeline(
-    "image-text-to-text",
-    model="google/medgemma-1.5-4b-it",
-    torch_dtype=torch.bfloat16,
-    device="cuda",
-)
-```
+> ⚠️ **Disclaimer**: This tool is for **research purposes only**. It is NOT a medical device and should never be used for real-world clinical decision-making.
 
-### 3. Run Multi-Image Diagnosis
-
-```python
-# Load all images for a case
-loaded_images = [...]  # List of {'image': PIL.Image, 'caption': str, 'view': str}
-
-# Generate diagnosis
-prediction = predict_diagnosis_multi_image(loaded_images, patient_info)
-
-# Compare with ground truth
-comparison = compare_diagnosis_with_gt(prediction, case_info['case_text'], patient_info)
-```
-
-## Dataset
-
-This project uses the **MultiCaRe** (Multimodal Case Reports) dataset, which contains:
-- Medical case reports with patient information
-- Associated medical images (MRI, CT, X-ray, etc.)
-- Image captions and metadata
-- Ground truth diagnoses from published case reports
-
-The `pxa_test_set` is a filtered subset focusing on:
-- Pleomorphic Xanthoastrocytoma (PXA)
-- Glioma-related cases
-- Head/brain MRI images
-
-## Model
-
-**MedGemma 1.5 4B-IT** is a medical vision-language model from Google designed for:
-- Medical image understanding
-- Clinical reasoning
-- Diagnostic assistance
-
-> ⚠️ **Disclaimer**: This model is for research purposes only and should not be used for actual clinical diagnosis.
-
-## Notebooks
-
-### `multicare_dataset.ipynb`
-Main analysis notebook that:
-1. Loads and filters the MultiCaRe dataset
-2. Selects brain MRI cases
-3. Loads all images for a patient case
-4. Runs multi-image diagnosis prediction
-5. Compares predictions with ground truth
-6. Evaluates model performance
-
-### `medgemma.ipynb`
-Additional experimentation with the MedGemma model.
-
-## License
-
-This project is for research and educational purposes. Please refer to:
-- [MedGemma Model License](https://huggingface.co/google/medgemma-1.5-4b-it)
-- [MultiCaRe Dataset License](https://github.com/mauro-nievoff/MultiCaRe_Dataset)
-
-## Acknowledgments
-
-- Google Health AI for the MedGemma model
-- MultiCaRe dataset creators
-- PubMed Central for open-access medical case reports
+## 📜 License & Acknowledgments
+- **MedGemma**: Subject to Google's Gemma Terms of Use.
+- **Data**: PubMed Central / MultiCaRe contributors.
+- **Developed by**: The MedGemma Research Team.
